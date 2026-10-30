@@ -1285,6 +1285,42 @@ finishedItemArt.iron='<path d="M10 42L18 18L40 10L55 29L47 53L24 56Z" fill="#8a9
 finishedItemArt.bar='<path d="M10 37L19 22L46 17L55 36L45 49L16 53Z" fill="#a7b8ae"/><path d="M10 37L43 34L55 36L45 49L16 53Z" fill="#718c86"/><path d="M20 25L44 21L48 30L18 34Z" fill="#d2d7c6"/>';
 var inputFixGuide=guideHTML;guideHTML=function(){return '<div class="notice"><h3>Controlos e primeiras conversas</h3><p>A roda do rato alterna entre as ferramentas que já tens. Nos menus, o scroll serve apenas para navegar. Aproxima-te de uma pessoa e usa E / Apanhar para conversar. Ao escolher uma planta, o cursor mostra a árvore ou as sementes; Esc ou outra ferramenta sai do modo de plantação.</p></div>'+inputFixGuide()};
 
+
+// DARWIN 32: physical story gates. Bridges cannot be bypassed by swimming,
+// digging underneath, placing makeshift blocks, or using a travel post.
+var crossingNotice=0;
+function lockedCrossings(){return routeDefinitions().filter(function(r){return r.kind==='bridge'&&!worldLife.routes[r.id]})}
+function crossingAtTile(tx,pad){return lockedCrossings().find(function(r){return tx>=r.x-(pad||0)&&tx<r.x+r.w+(pad||0)})}
+function crossingBarrier(x,y,w,h){return lockedCrossings().some(function(r){var gateX=(r.x+r.w*.5)*T;return x<gateX+T*.32&&x+w>gateX-T*.32})}
+function crossingBuildLock(tx,w){for(var i=tx;i<tx+(w||1);i++)if(crossingAtTile(i,2))return true;return false}
+function crossingMessage(){if(crossingNotice>0)return;crossingNotice=3;tell('PASSAGEM INTERDITA · Constrói a ponte na missão Caminhos (Menu → Pontes e caminhos). Não é possível contornar pelo lago ou subsolo.',4)}
+var crossingBlockedOriginal=blocked;
+blocked=function(x,y,w,h,animal){return crossingBlockedOriginal(x,y,w,h,animal)||(!animal&&crossingBarrier(x,y,w,h))};
+var crossingPlacementOriginal=placement;
+placement=function(){var v=crossingPlacementOriginal();if(crossingBuildLock(v.tx,v.w)){v.ok=false;v.reason='Zona reservada à missão da ponte. Repara-a em Pontes e caminhos.'}return v};
+var crossingPlanOriginal=validatePlan;
+validatePlan=function(plan){var v=crossingPlanOriginal(plan);if(plan.parts.some(function(e){return crossingBuildLock(e.x,e.w||1)})){v.ok=false;v.reason='Não podes construir na travessia antes de reparar a ponte.'}return v};
+var crossingUseOriginal=useBase;
+useBase=function(){var q=target(),tx=Math.floor(q.x/T);if(crossingBuildLock(tx,1)&&!worldLife.routes[(crossingAtTile(tx,2)||{}).id]){if(tool()==='pick'||tool()==='ironpick'||tool()==='hammer'||tool()==='hand'){crossingMessage();return}}crossingUseOriginal()};
+var crossingTravelOriginal=travelRoute;
+travelRoute=function(id){var to=routeDefinitions().find(function(r){return r.id===id});if(to&&lockedCrossings().some(function(r){var mid=r.x+r.w/2;return (p.x/T<mid&&to.x>mid)||(p.x/T>mid&&to.x<mid)})){crossingMessage();return false}return crossingTravelOriginal(id)};
+var crossingAircraftOriginal=updateAircraft;
+updateAircraft=function(dt){if(aircraft&&aircraft.riding&&lockedCrossings().some(function(r){return Math.abs(aircraft.x/T-(r.x+r.w/2))<8})){crossingMessage();aircraft.vx=0}crossingAircraftOriginal(dt)};
+var crossingRouteNearOriginal=routeNear;
+routeNear=function(r){if(r.kind==='bridge'){var left=(r.x-1)*T,right=(r.x+r.w+1)*T;return Math.min(Math.hypot(left-p.x,r.y*T-p.y),Math.hypot(right-p.x,r.y*T-p.y))<T*8}return crossingRouteNearOriginal(r)};
+var crossingRepairOriginal=repairRoute;
+repairRoute=function(id){var r=routeDefinitions().find(function(r){return r.id===id});if(r&&r.kind==='bridge'&&!worldLife.routes[id]){if(!missionDone('workshop')){tell('Missão obrigatória: cria o martelo e coloca a bancada antes de reparar a ponte.',5);return false}if(!routeNear(r)){tell('Vai até à margem da ponte. Marca-a no mapa para encontrares o local.',5);return false}}var ok=crossingRepairOriginal(id);if(ok&&r&&r.kind==='bridge'){journalNote('Travessia desbloqueada: '+r.name,'A ponte abriu uma nova zona do mundo. Agora podes atravessar e construir do outro lado.');tell('NOVA REGIÃO DESBLOQUEADA · '+r.name+'! A travessia está finalmente aberta.',6)}return ok};
+var crossingRoutesHTML=routesHTML;
+routesHTML=function(){return '<div class="notice"><h3>Travessias obrigatórias</h3><p><b>Sem ponte não há passagem.</b> A água, o subsolo e as construções improvisadas não permitem contornar as travessias. Conclui «Um lugar para trabalhar», recolhe os materiais e repara a ponte a partir da margem. Só depois podes explorar e construir do outro lado.</p><p>Missão da bancada: '+(missionDone('workshop')?'✓ Concluída':'Por concluir')+'.</p></div>'+crossingRoutesHTML()};
+var crossingGuideOriginal=guideHTML;
+guideHTML=function(){return '<div class="notice"><h3>Progressão real por pontes</h3><p>As travessias são bloqueios físicos, não apenas avisos. Para avançar, cria martelo e bancada, abre Menu → Pontes e caminhos, marca a ponte no mapa, reúne 12 tábuas, 6 fibras e 4 pedras e repara-a na margem. Até lá não podes atravessar o lago, passar por baixo dele ou construir dentro da travessia.</p></div>'+crossingGuideOriginal()};
+var crossingUpdateOriginal=update;
+update=function(dt){crossingNotice=Math.max(0,crossingNotice-dt);var oldX=p.x;crossingUpdateOriginal(dt);if(!started||gameOver||storyActive)return;var gate=lockedCrossings().find(function(r){return Math.abs((r.x+r.w*.5)*T-p.x)<T*5});if(gate&&!panel){$('quest').textContent='MISSÃO OBRIGATÓRIA · '+gate.name;$('questTip').textContent=missionDone('workshop')?'Reúne 12 tábuas, 6 fibras e 4 pedras. Menu → Pontes e caminhos → Reparar.':'Primeiro cria um martelo e uma bancada. Depois repara a ponte.';if(Math.abs(p.x-oldX)<.05&&(keys.a||keys.d))crossingMessage()}};
+var crossingDrawOriginal=drawLandmarks;
+drawLandmarks=function(){crossingDrawOriginal();lockedCrossings().forEach(function(r){var x=(r.x+r.w*.5)*T-cam.x,y=r.y*T-cam.y;if(x<-100||x>W+100)return;ctx.save();ctx.strokeStyle='#d4aa78';ctx.lineWidth=3;ctx.setLineDash([8,7]);ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='#18343be9';ctx.fillRect(x-106,y-112,212,51);ctx.fillStyle='#f2d9a9';ctx.font='bold 12px Arial';ctx.textAlign='center';ctx.fillText('PASSAGEM BLOQUEADA',x,y-91);ctx.font='10px Arial';ctx.fillText('Repara a ponte para avançar',x,y-75);ctx.restore()})};
+var crossingSnapshotOriginal=snapshot;
+snapshot=function(){var s=crossingSnapshotOriginal();s.revision=32;return s};
+
 generate();if(load()){hasSavedWorld=true;$('start').textContent='CONTINUAR JOGO';$('newWorldStart').style.display='inline-block'}else{worldSeed=seedNumber('');generate()}hotbar();var last=0;function frame(ms){try{var dt=Math.min((ms-last)/1000||.016,.035);last=ms;update(dt);updateSoundscape();draw();requestAnimationFrame(frame)}catch(e){fail(e)}}requestAnimationFrame(frame);window.addEventListener('pagehide',function(){if(started)save(false)});
 }catch(e){fail(e)}
 })();
